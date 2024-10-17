@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+    tools {
+        jdk 'JDK21' // Remove if not needed for your Python project
+    }
+    environment {
+        SONARQUBE_SERVER_URL = 'http://localhost:9000'
+        SONARQUBE_PROJECT_KEY = 'Python_Project'
+        DOCKER_IMAGE = 'python_project'
+        REPORT_FILE = 'trivy-report.json'
+        PDF_FILE = 'trivy-report.pdf'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout([$class: 'GitSCM', 
+                          branches: [[name: '*/main']], 
+                          userRemoteConfigs: [[url: 'https://github.com/your-python-repo.git']]
+                ])
+            }
+        }
+
+        stage('Build') {
+            steps {
+                bat 'pip install -r requirements.txt' 
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube_Server') {
+                    bat '''
+                       sonar-scanner.bat -D"sonar.projectKey=Python_Project" -D"sonar.sources=." -D"sonar.host.url=http://localhost:9000" -D"sonar.token=sqp_0b50ba94883ffbba6f463f593496f84be3f5df75"
+                    '''
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    docker.build("${DOCKER_IMAGE}:${env.BUILD_NUMBER}")
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                script {
+                    bat '''
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v C:/ProgramData/Jenkins/.jenkins/workspace/python-sonar:/root/.cache/ -v C:/ProgramData/Jenkins/.jenkins/workspace/python-sonar/trivy:/root/.trivy aquasec/trivy image --skip-db-update --scanners vuln --format json -o C:/ProgramData/Jenkins/.jenkins/workspace/python-sonar/trivy-report.json %DOCKER_IMAGE%:%BUILD_NUMBER%
+                    '''
+                }
+            }
+        }
+
+        stage('Generate PDF Report') {
+            steps {
+                script {
+                    bat '''
+                        type ${env.REPORT_FILE} | jq '.' | pandoc -o ${env.PDF_FILE}
+                    '''
+                }
+            }
+        }
+    }
+}
